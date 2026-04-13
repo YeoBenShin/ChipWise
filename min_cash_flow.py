@@ -13,8 +13,13 @@ def normalize_state(state):
         normalized.append([person, float(amount)])
     return normalized
 
-def build_net_amounts(final_state, initial_state):
+def build_net_amounts(final_state, initial_state=None):
     net_amounts = []
+    if initial_state is None:
+        for person, amount in final_state:
+            net_amounts.append([person, amount])
+        return net_amounts
+
     for i in range(len(final_state)):
         person = final_state[i][0]
         net_amount = final_state[i][1] - initial_state[i][1]
@@ -48,10 +53,10 @@ def build_header_transactions(sum_owes, sum_owed):
     transactions = []
     if sum_owed != sum_owes:
         transactions.append(
-            f"Warning: Total owed does not match total owes. Please check the input data.\n\nTotal Owed: ${sum_owed:.2f}, Total Owes: ${-sum_owes:.2f}\n"
+            f"Warning: Total owed does not match total owes. Please check the input data.\n\nTotal Owed: ${-sum_owed:.2f}, Total Owes: ${-sum_owes:.2f}\n"
         )
     else:
-        transactions.append(f"Total Owed: ${sum_owed:.2f}, Total Owes: ${-sum_owes:.2f}\n")
+        transactions.append(f"Total Owed: ${-sum_owed:.2f}, Total Owes: ${-sum_owes:.2f}\n")
     transactions.append("Transactions to settle debts:")
     return transactions
 
@@ -84,9 +89,10 @@ def settle_transactions(owes, owed, transactions):
     return transactions
 
 
-def compute(final_state, initial_state):
+def compute(final_state, initial_state=None):
     final_state = normalize_state(final_state)
-    initial_state = normalize_state(initial_state)
+    if initial_state is not None:
+        initial_state = normalize_state(initial_state)
 
     net_amounts = build_net_amounts(final_state, initial_state)
     owes, owed = split_and_sort_balances(net_amounts)
@@ -97,9 +103,10 @@ def compute(final_state, initial_state):
 
 
 if __name__ == "__main__":
-    trasactions = compute([['chan', 12], ['daniel', 12.70], ['cheryl', 27.50], ['ben', 23.50], ['shi pei', 19],
-                  ['kesh + ryan', 47], ['solaiy', 17], ['jonte', 13], ['Sean', 7.5]],
-        [['chan', 20], ['daniel', 20], ['cheryl', 20], ['ben', 20], ['shi pei', 20], ['kesh + ryan', 20], ['solaiy', 20], ['jonte', 20], ['Sean', 20]])
+    trasactions = compute([
+        ['chan', -8], ['daniel', -7.3], ['cheryl', 7.5], ['ben', 3.5],
+        ['shi pei', -1], ['kesh + ryan', 27], ['solaiy', -3], ['jonte', -7], ['Sean', -11.7]
+    ])
     
     for t in trasactions:
         print(t)

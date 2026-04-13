@@ -4,15 +4,15 @@ A simple Telegram bot that helps settle debts between players using a greedy cas
 
 The bot lets you:
 - add player final balances,
-- set a shared initial buy-in,
-- edit players or buy-in values,
+- edit player values,
 - compute a minimal set of settlement transfers.
 
 ## How It Works
 
-This project computes each player's net amount:
+This project expects each player's final net result directly:
 
-- `net = final_balance - initial_buy_in`
+- losses as negative numbers,
+- winnings as positive numbers.
 
 Then it greedily settles debts by repeatedly matching:
 - the player who owes the most, and
@@ -81,7 +81,6 @@ Start the bot in Telegram with `/start`.
 
 Main menu options:
 - `Add Players`
-- `Add Initial Buy In (Default = $0)`
 - `Edit Information`
 - `Compute Debt`
 - `Clear All Information`
@@ -97,8 +96,8 @@ Cheryl 100
 ```
 
 Important:
-- Amount is the final state balance relative to the initial buy-in.
-- If initial buy-in is $10 and a player bought in for $20 total, subtract the initial $10 before entering amount.
+- Amount is the player's final net result.
+- Use negative for losses and positive for winnings.
 
 ## Example Settlement Output
 

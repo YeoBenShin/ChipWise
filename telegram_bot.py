@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 from typing import Dict, List, Tuple
 
 from telegram import ReplyKeyboardMarkup, Update
@@ -17,22 +16,20 @@ logging.basicConfig(
 
 MAIN_MENU = [
 	["Compute Debt"],
-	[ "Add Players", "Add Initial Buy In (Default = $0)"],
+	["Add Players"],
 	["Edit Information", "Clear All Information"],
 ]
 
 DONE_ADDING = "Done Adding Players"
 BACK_MAIN = "Back to Main Menu"
 
-EDIT_TYPE_MENU = [["Initial Bet Size", "Players"], [BACK_MAIN]]
+EDIT_TYPE_MENU = [["Players"], [BACK_MAIN]]
 EDIT_CONTINUE_MENU = [["Yes", "No"]]
 
 MODE_ADD_MULTI = "add_multi"
-MODE_SET_BUYIN = "set_buyin"
 MODE_EDIT_CHOOSE_TYPE = "edit_choose_type"
 MODE_EDIT_CHOOSE_PLAYER = "edit_choose_player"
 MODE_EDIT_PLAYER_VALUE = "edit_player_value"
-MODE_EDIT_BUYIN_VALUE = "edit_buyin_value"
 MODE_EDIT_CONTINUE = "edit_continue"
 
 ERROR_PREFIX = "Error: {detail}"
@@ -40,12 +37,11 @@ ERR_INVALID_PLAYER_FORMAT = "Invalid format.\nUse: person_name amount"
 ERR_EMPTY_NAME = "Name cannot be empty."
 ERR_EMPTY_PLAYER_BLOCK = "Please provide at least one non-empty line."
 ERR_DUPLICATE_PLAYER_IN_INPUT = "Duplicate player name in the same input: {name}"
-ERR_NEGATIVE_VALUE = "Value cannot be negative."
-ERR_NUMBER_REQUIRED = "Please enter a valid number (for example: 10 or 10.5)."
+ERR_SIGN_SEPARATED_FROM_AMOUNT = "Invalid amount. Do not separate '+' or '-' from the number (example: -20, not - 20)."
 ERR_NO_PLAYERS_TO_COMPUTE = "No players found. Add players first."
 ERR_PLAYER_EXISTS = "Player already exists: {name}.\nUse Edit Information to change it."
 ERR_NO_PLAYERS_TO_EDIT = "No players available to edit."
-ERR_INVALID_EDIT_OPTION = "Invalid option.\nChoose 'Initial Bet Size' or 'Players'."
+ERR_INVALID_EDIT_OPTION = "Invalid option.\nChoose 'Players'."
 ERR_PLAYER_NOT_FOUND = "Player not found.\nPlease choose one of the listed names."
 ERR_SELECTED_PLAYER_MISSING = "Selected player no longer exists.\nChoose edit option again."
 ERR_PLAYER_NAME_EXISTS = "Player name already exists: {name}"
@@ -79,10 +75,6 @@ def get_players_store(context: ContextTypes.DEFAULT_TYPE) -> Dict[str, float]:
 	return players
 
 
-def get_initial_buy_in(context: ContextTypes.DEFAULT_TYPE) -> float:
-	return float(context.user_data.setdefault("initial_buy_in", 0.0))
-
-
 def set_mode(context: ContextTypes.DEFAULT_TYPE, mode: str | None) -> None:
 	if mode is None:
 		context.user_data.pop("mode", None)
@@ -105,15 +97,23 @@ def build_edit_player_picker_markup(players: Dict[str, float]) -> ReplyKeyboardM
 
 
 def parse_player_line(text: str) -> Tuple[str, float]:
-	match = re.match(r"^(.+?)\s+(-?\d+(?:\.\d+)?)$", text.strip())
-	if not match:
+	parts = text.strip().split()
+	if len(parts) < 2:
 		raise ValueError(ERR_INVALID_PLAYER_FORMAT)
 
-	name = match.group(1).strip()
-	amount = float(match.group(2))
+	amount_token = parts[-1]
+	if len(parts) >= 2 and parts[-2] in {"-", "+"}:
+		raise ValueError(ERR_SIGN_SEPARATED_FROM_AMOUNT)
 
+	name = " ".join(parts[:-1]).strip()
 	if not name:
 		raise ValueError(ERR_EMPTY_NAME)
+
+	try:
+		amount = float(amount_token)
+	except ValueError as error:
+		raise ValueError(ERR_INVALID_PLAYER_FORMAT) from error
+
 	return name, amount
 
 
@@ -140,45 +140,39 @@ def parse_multiple_players_block(text: str) -> List[Tuple[str, float]]:
 	return parsed
 
 
-def parse_non_negative_float(text: str) -> float:
-	try:
-		value = float(text.strip())
-	except ValueError as error:
-		raise ValueError(ERR_NUMBER_REQUIRED) from error
+def build_net_summary(players: Dict[str, float]) -> str:
+	total_owes = sum(-amount for amount in players.values() if amount < 0)
+	total_owed = sum(amount for amount in players.values() if amount > 0)
+	difference = total_owed - total_owes
 
-	if value < 0:
-		raise ValueError(ERR_NEGATIVE_VALUE)
-	return value
+	if abs(difference) > 1e-9:
+		return (
+			f"Warning: Total owed does not match total owes. Please check the input data.\n\n"
+			f"Total Owed: ${total_owed:.2f}, Total Owes: ${total_owes:.2f}\n"
+			f"Difference: ${difference:.2f}"
+		)
 
-
-def build_pot_summary(players: Dict[str, float], buy_in: float) -> str:
-	entered_total = sum(players.values())
-	expected_total = buy_in * len(players)
-	difference = entered_total - expected_total
 	return (
-		f"Pot check:\n"
-		f"- Entered total: ${entered_total:.2f}\n"
-		f"- Expected total (players x initial buy in): ${expected_total:.2f}\n"
-		f"- Difference: ${difference:.2f}"
+		f"Total Owed: ${total_owed:.2f}, Total Owes: ${total_owes:.2f}\n"
+		f"Difference: ${difference:.2f}"
 	)
 
 
-def build_data_summary_from_values(players: Dict[str, float], buy_in: float) -> str:
+def build_data_summary_from_values(players: Dict[str, float]) -> str:
 	if not players:
-		return f"Initial buy in: ${buy_in:.2f}\nPlayers: (none)"
+		return "Players: (none)"
 
-	lines = [f"Initial buy in: ${buy_in:.2f}", "Players:"]
+	lines = ["Players:"]
 	for name, amount in players.items():
 		lines.append(f"- {name}: ${amount:.2f}")
 	lines.append("")
-	lines.append(build_pot_summary(players, buy_in))
+	lines.append(build_net_summary(players))
 	return "\n".join(lines)
 
 
 def build_data_summary(context: ContextTypes.DEFAULT_TYPE) -> str:
 	players = get_players_store(context)
-	buy_in = get_initial_buy_in(context)
-	return build_data_summary_from_values(players, buy_in)
+	return build_data_summary_from_values(players)
 
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix: str | None = None) -> None:
@@ -200,7 +194,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def handle_compute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 	players = get_players_store(context)
-	buy_in = get_initial_buy_in(context)
 
 	if not players:
 		await update.message.reply_text(
@@ -210,11 +203,9 @@ async def handle_compute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 		return
 
 	final_state = [[name, amount] for name, amount in players.items()]
-	initial_state = [[name, buy_in] for name in players.keys()]
-
-	transactions = compute(final_state, initial_state)
-	pot_summary = build_pot_summary(players, buy_in)
-	output = f"{pot_summary}\n\n" + "\n".join(transactions)
+	transactions = compute(final_state)
+	net_summary = build_net_summary(players)
+	output = "\n".join(transactions)
 
 	await update.message.reply_text(output, reply_markup=build_main_menu_markup())
 
@@ -223,8 +214,7 @@ async def enter_add_multi_mode(update: Update, context: ContextTypes.DEFAULT_TYP
 	set_mode(context, MODE_ADD_MULTI)
 	await update.message.reply_text(
 		"Send all players at once, one per line, in format: person_name amount\n\n"
-		"The amount refers to the final state balance, disregarding the initial buy-in. Any additional buy-in amount must be excluded from the amount sent here.\n\n"
-		"e.g. If the initial buy-in is $10 and the player bought in for $20 total, then he should minus $10 from the amount sent here.\n\n"
+		"The amount should be each player's FINAL net result. Use negative for losses and positive for winnings.\n\n"
 		"Example:\nAlice -20\nBen 15.5\nCheryl 100",
 		reply_markup=ReplyKeyboardMarkup([[BACK_MAIN]], resize_keyboard=True),
 	)
@@ -256,35 +246,6 @@ async def handle_add_multi_mode(update: Update, context: ContextTypes.DEFAULT_TY
 	set_mode(context, None)
 	await show_main_menu(update, context, f"Added {len(parsed_players)} players.")
 
-
-async def enter_set_buy_in_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-	set_mode(context, MODE_SET_BUYIN)
-	await update.message.reply_text(
-		"Send initial buy in amount (a number that is 0 or above).",
-		reply_markup=ReplyKeyboardMarkup([[BACK_MAIN]], resize_keyboard=True),
-	)
-
-
-async def handle_set_buy_in_mode(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-	if text == BACK_MAIN:
-		set_mode(context, None)
-		await show_main_menu(update, context, "Back to main menu.")
-		return
-
-	try:
-		buy_in = parse_non_negative_float(text)
-	except ValueError as error:
-		await update.message.reply_text(
-			format_error(str(error)),
-			reply_markup=ReplyKeyboardMarkup([[BACK_MAIN]], resize_keyboard=True),
-		)
-		return
-
-	context.user_data["initial_buy_in"] = buy_in
-	set_mode(context, None)
-	await show_main_menu(update, context, f"Initial buy in set to ${buy_in:.2f}.")
-
-
 async def enter_edit_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 	set_mode(context, MODE_EDIT_CHOOSE_TYPE)
 	current_state = build_data_summary(context)
@@ -306,17 +267,6 @@ async def handle_edit_choose_type(update: Update, context: ContextTypes.DEFAULT_
 	if text == BACK_MAIN:
 		set_mode(context, None)
 		await show_main_menu(update, context, "Back to main menu.")
-		return
-
-	if text == "Initial Bet Size":
-		set_mode(context, MODE_EDIT_BUYIN_VALUE)
-		current_buy_in = get_initial_buy_in(context)
-		current_state = build_data_summary(context)
-		await update.message.reply_text(
-			f"Previous initial bet size: ${current_buy_in:.2f}\n\nCurrent state:\n{current_state}\n\n"
-			"Send the new initial bet size (a number that is 0 or above).",
-			reply_markup=ReplyKeyboardMarkup([[BACK_MAIN]], resize_keyboard=True),
-		)
 		return
 
 	if text == "Players":
@@ -363,8 +313,7 @@ async def handle_edit_choose_player(update: Update, context: ContextTypes.DEFAUL
 	set_mode(context, MODE_EDIT_PLAYER_VALUE)
 	await update.message.reply_text(
 		"Send the new player info in format: person_name amount\n\n"
-		"The amount refers to the final state balance, disregarding the initial buy-in. Any additional buy-in amount must be excluded from the amount sent here.\n\n"
-		"e.g. If the initial buy-in is $10 and the player bought in for $20 total, then he should minus $10 from the amount sent here.",
+		"The amount should be each player's FINAL net result. Use negative for losses and positive for winnings.",
 		reply_markup=ReplyKeyboardMarkup([[BACK_MAIN]], resize_keyboard=True),
 	)
 
@@ -400,14 +349,13 @@ async def handle_edit_player_value(update: Update, context: ContextTypes.DEFAULT
 		)
 		return
 
-	old_buy_in = get_initial_buy_in(context)
 	old_players = dict(players)
 
 	del players[old_name]
 	players[new_name] = new_amount
 	context.user_data.pop("edit_target_player", None)
 
-	new_state = build_data_summary_from_values(players, old_buy_in)
+	new_state = build_data_summary_from_values(players)
 	await update.message.reply_text(
 		f"Player updated.\n"
 		f"Old value: {old_name} ${old_players[old_name]:.2f}\n"
@@ -415,39 +363,6 @@ async def handle_edit_player_value(update: Update, context: ContextTypes.DEFAULT
 		f"New state:\n{new_state}"
 	)
 	await ask_edit_continue(update, context)
-
-
-async def handle_edit_buyin_value(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-	if text == BACK_MAIN:
-		set_mode(context, MODE_EDIT_CHOOSE_TYPE)
-		await update.message.reply_text(
-			"What would you like to edit?",
-			reply_markup=ReplyKeyboardMarkup(EDIT_TYPE_MENU, resize_keyboard=True),
-		)
-		return
-
-	try:
-		value = parse_non_negative_float(text)
-	except ValueError as error:
-		await update.message.reply_text(
-			format_error(str(error)),
-			reply_markup=ReplyKeyboardMarkup([[BACK_MAIN]], resize_keyboard=True),
-		)
-		return
-
-	old_buy_in = get_initial_buy_in(context)
-	players = get_players_store(context)
-
-	context.user_data["initial_buy_in"] = value
-	new_state = build_data_summary_from_values(players, value)
-	await update.message.reply_text(
-		f"Initial buy in size updated.\n"
-		f"Old value: ${old_buy_in:.2f}\n"
-		f"New value: ${value:.2f}\n\n"
-		f"New state:\n{new_state}"
-	)
-	await ask_edit_continue(update, context)
-
 
 async def handle_edit_continue(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
 	lowered = text.strip().lower()
@@ -472,7 +387,6 @@ async def handle_edit_continue(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def clear_all_information(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 	context.user_data["players"] = {}
-	context.user_data["initial_buy_in"] = 0.0
 	context.user_data.pop("edit_target_player", None)
 	set_mode(context, None)
 	await show_main_menu(update, context, "All information has been cleared.")
@@ -490,10 +404,6 @@ async def route_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 		await handle_add_multi_mode(update, context, text)
 		return
 
-	if mode == MODE_SET_BUYIN:
-		await handle_set_buy_in_mode(update, context, text)
-		return
-
 	if mode == MODE_EDIT_CHOOSE_TYPE:
 		await handle_edit_choose_type(update, context, text)
 		return
@@ -506,10 +416,6 @@ async def route_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 		await handle_edit_player_value(update, context, text)
 		return
 
-	if mode == MODE_EDIT_BUYIN_VALUE:
-		await handle_edit_buyin_value(update, context, text)
-		return
-
 	if mode == MODE_EDIT_CONTINUE:
 		await handle_edit_continue(update, context, text)
 		return
@@ -520,10 +426,6 @@ async def route_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 	if text == "Add Players":
 		await enter_add_multi_mode(update, context)
-		return
-
-	if text == "Add Initial Buy In (Default = $0)":
-		await enter_set_buy_in_mode(update, context)
 		return
 
 	if text == "Edit Information":
