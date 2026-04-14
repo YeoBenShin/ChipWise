@@ -11,8 +11,8 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-COPY min_cash_flow.py telegram_bot.py ./
+COPY app.py min_cash_flow.py telegram_bot.py ./
 
 USER appuser
 
-CMD ["python", "telegram_bot.py"]
+CMD ["python", "app.py"]

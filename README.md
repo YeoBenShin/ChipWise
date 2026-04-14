@@ -22,6 +22,7 @@ Each transfer is the minimum of those two amounts, repeated until all balances a
 
 ## Project Structure
 
+- `app.py`: Flask entrypoint, webhook routes, and bot handlers
 - `telegram_bot.py`: Telegram bot UI and conversation flow
 - `min_cash_flow.py`: Greedy debt settlement algorithm
 - `requirements.txt`: Python dependency list
@@ -52,16 +53,22 @@ pip install -r requirements.txt
 ```env
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 WEBHOOK_URL=https://your-public-domain-or-tunnel
-WEBHOOK_PATH=/telegram-webhook
-PORT=8080
-WEBHOOK_LISTEN=0.0.0.0
+WEBHOOK_SECRET_TOKEN=optional_shared_secret
 ```
 
-4. Run the bot:
+4. Run the Flask app locally:
 
 ```bash
-python telegram_bot.py
+python app.py
 ```
+
+5. Register the webhook once your public URL is available:
+
+```bash
+curl https://your-domain-or-vercel-app/api/set-webhook
+```
+
+The webhook endpoint is `POST /api/webhook` and the webhook registration endpoint is `GET /api/set-webhook`.
 
 ## Setup (Docker)
 
@@ -77,10 +84,32 @@ docker build -t greedy-debt-settlement .
 docker run --rm \
   -e TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here \
   -e WEBHOOK_URL=https://your-public-domain-or-tunnel \
-  -e WEBHOOK_PATH=/telegram-webhook \
-  -e PORT=8080 \
-  -e WEBHOOK_LISTEN=0.0.0.0 \
+  -e WEBHOOK_SECRET_TOKEN=optional_shared_secret \
   greedy-debt-settlement
+```
+
+## Setup (Vercel)
+
+Vercel will use the top-level Flask `app` defined in [app.py](app.py).
+
+Required environment variables:
+
+```env
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+WEBHOOK_URL=https://your-vercel-project.vercel.app
+WEBHOOK_SECRET_TOKEN=optional_shared_secret
+```
+
+After deployment, call:
+
+```bash
+curl https://your-vercel-project.vercel.app/api/set-webhook
+```
+
+That registers Telegram to send updates to:
+
+```text
+https://your-vercel-project.vercel.app/api/webhook
 ```
 
 ## Bot Usage

@@ -1,8 +1,10 @@
 import logging
 import os
 import re
+import asyncio
 from typing import Dict, List, Tuple
 
+from flask import Flask, jsonify, request
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -49,7 +51,7 @@ ERR_PLAYER_NAME_EXISTS = "Player name already exists: {name}"
 ERR_CHOOSE_YES_NO = "Please choose Yes or No."
 ERR_UNKNOWN_OPTION = "Unknown option.\nUse the menu buttons or /start."
 ERR_MISSING_BOT_TOKEN = "Missing TELEGRAM_BOT_TOKEN in environment or .env file"
-ERR_MISSING_WEBHOOK_URL = "Missing WEBHOOK_URL in environment or .env file"
+ERR_MISSING_WEBHOOK_URL = "Missing WEBHOOK_URL in environment or VERCEL_URL in environment or .env file"
 
 
 def format_error(detail: str) -> str:
@@ -551,38 +553,119 @@ def get_bot_token() -> str:
 	return token
 
 
-def get_webhook_config() -> Tuple[str, str, int, str]:
-	webhook_url = os.getenv("WEBHOOK_URL", "").strip()
-	if not webhook_url:
+def get_webhook_config() -> Tuple[str, str]:
+	public_base_url = os.getenv("WEBHOOK_URL", "").strip()
+	if not public_base_url:
+		vercel_url = os.getenv("VERCEL_URL", "").strip()
+		if vercel_url:
+			public_base_url = f"https://{vercel_url}"
+
+	if not public_base_url:
 		raise ValueError(ERR_MISSING_WEBHOOK_URL)
 
-	webhook_path = os.getenv("WEBHOOK_PATH", "/telegram-webhook").strip() or "/telegram-webhook"
-	if not webhook_path.startswith("/"):
-		webhook_path = f"/{webhook_path}"
+	webhook_secret = os.getenv("WEBHOOK_SECRET_TOKEN", "").strip()
 
-	listen = os.getenv("WEBHOOK_LISTEN", "0.0.0.0").strip() or "0.0.0.0"
-	port = int(os.getenv("PORT", "8080").strip())
+	return public_base_url.rstrip("/"), webhook_secret
 
-	return webhook_url, webhook_path, port, listen
+
+def get_webhook_url() -> str:
+	public_base_url, _ = get_webhook_config()
+	return f"{public_base_url}/api/webhook"
+
+
+def build_telegram_application(token: str) -> Application:
+	telegram_app = Application.builder().token(token).build()
+
+	telegram_app.add_handler(CommandHandler("start", start))
+	telegram_app.add_handler(CommandHandler("help", start))
+	telegram_app.add_handler(CommandHandler("cancel", cancel))
+	telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_text))
+
+	return telegram_app
+
+
+def get_telegram_application() -> Application:
+	telegram_app = getattr(app, "telegram_application", None)
+	if telegram_app is None:
+		token = get_bot_token()
+		telegram_app = build_telegram_application(token)
+		app.telegram_application = telegram_app
+	return telegram_app
+
+
+async def ensure_telegram_application_initialized() -> Application:
+	telegram_app = get_telegram_application()
+	if not getattr(telegram_app, "_custom_initialized", False):
+		await telegram_app.initialize()
+		telegram_app._custom_initialized = True
+	return telegram_app
+
+
+async def process_telegram_update(payload: dict) -> None:
+	telegram_app = await ensure_telegram_application_initialized()
+	update = Update.de_json(payload, telegram_app.bot)
+	await telegram_app.process_update(update)
+
+
+async def register_telegram_webhook() -> dict:
+	telegram_app = await ensure_telegram_application_initialized()
+	webhook_url = get_webhook_url()
+	_, webhook_secret = get_webhook_config()
+	await telegram_app.bot.set_webhook(
+		url=webhook_url,
+		secret_token=webhook_secret or None,
+		drop_pending_updates=True,
+	)
+	return {"webhook_url": webhook_url, "secret_token_enabled": bool(webhook_secret)}
+
+
+app = Flask(__name__)
+app.telegram_application = None
+
+
+@app.get("/")
+def health_check():
+	return jsonify({"ok": True, "service": "chipwise-telegram-bot"})
+
+
+@app.get("/api/set-webhook")
+def set_webhook_route():
+	try:
+		result = asyncio.run(register_telegram_webhook())
+	except Exception as error:
+		return jsonify({"ok": False, "error": str(error)}), 500
+	return jsonify({"ok": True, **result})
+
+
+@app.post("/api/webhook")
+def telegram_webhook_route():
+	_, webhook_secret = get_webhook_config()
+	if webhook_secret:
+		received_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+		if received_secret != webhook_secret:
+			return jsonify({"ok": False, "error": "invalid secret token"}), 401
+
+	payload = request.get_json(silent=True) or {}
+	if not payload:
+		return jsonify({"ok": False, "error": "missing json payload"}), 400
+
+	try:
+		asyncio.run(process_telegram_update(payload))
+	except Exception as error:
+		logging.exception("Failed to process Telegram update")
+		return jsonify({"ok": False, "error": str(error)}), 500
+
+	return jsonify({"ok": True})
+
+
+@app.route("/api/webhook", methods=["GET"])
+def telegram_webhook_hint():
+	return jsonify({"ok": True, "message": "Use POST for Telegram webhook updates."})
 
 
 def main() -> None:
-	token = get_bot_token()
-	webhook_url, webhook_path, port, listen = get_webhook_config()
-	app = Application.builder().token(token).build()
-
-	app.add_handler(CommandHandler("start", start))
-	app.add_handler(CommandHandler("help", start))
-	app.add_handler(CommandHandler("cancel", cancel))
-	app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_text))
-
-	app.run_webhook(
-		listen=listen,
-		port=port,
-		url_path=webhook_path,
-		webhook_url=f"{webhook_url}{webhook_path}",
-		drop_pending_updates=True,
-	)
+	port = int(os.getenv("PORT", "3000").strip())
+	app.run(host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":
