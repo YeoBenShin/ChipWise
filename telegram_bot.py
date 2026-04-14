@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from typing import Dict, List, Tuple
 
 from telegram import ReplyKeyboardMarkup, Update
@@ -148,12 +149,12 @@ def build_net_summary(players: Dict[str, float]) -> str:
 	if abs(difference) > 1e-9:
 		return (
 			f"Warning: Total owed does not match total owes. Please check the input data.\n\n"
-			f"Total Owed: ${total_owed:.2f}, Total Owes: ${total_owes:.2f}\n"
+			f"Total Owed: ${total_owed:.2f}\nTotal Owes: ${total_owes:.2f}\n"
 			f"Difference: ${difference:.2f}"
 		)
 
 	return (
-		f"Total Owed: ${total_owed:.2f}, Total Owes: ${total_owes:.2f}\n"
+		f"Total Owed: ${total_owed:.2f}\nTotal Owes: ${total_owes:.2f}\n"
 		f"Difference: ${difference:.2f}"
 	)
 
@@ -173,6 +174,96 @@ def build_data_summary_from_values(players: Dict[str, float]) -> str:
 def build_data_summary(context: ContextTypes.DEFAULT_TYPE) -> str:
 	players = get_players_store(context)
 	return build_data_summary_from_values(players)
+
+
+def parse_transfer_line(line: str) -> Tuple[str, str, float] | None:
+	match = re.match(r"^(.+?)\s+->\s+(.+?)\s+\$(-?\d+(?:\.\d+)?)$", line.strip())
+	if not match:
+		return None
+
+	debtor = match.group(1).strip()
+	creditor = match.group(2).strip()
+	amount = float(match.group(3))
+	return debtor, creditor, amount
+
+
+def build_mismatch_reconciliation(players: Dict[str, float], transactions: List[str]) -> str:
+	total_owes = sum(-amount for amount in players.values() if amount < 0)
+	total_owed = sum(amount for amount in players.values() if amount > 0)
+	difference = total_owed - total_owes
+
+	if abs(difference) <= 1e-9:
+		return ""
+
+	actual_paid = {name: 0.0 for name in players.keys()}
+	actual_received = {name: 0.0 for name in players.keys()}
+
+	for line in transactions:
+		parsed = parse_transfer_line(line)
+		if parsed is None:
+			continue
+		debtor, creditor, amount = parsed
+		if debtor in actual_paid:
+			actual_paid[debtor] += amount
+		if creditor in actual_received:
+			actual_received[creditor] += amount
+
+	lines = [
+		"Reconciliation (Totals Mismatch):",
+		f"Difference to reconcile: ${difference:.2f}",
+		"",
+		"Payers:",
+	]
+
+	has_payer_line = False
+	for name, net in players.items():
+		if net >= 0:
+			continue
+		expected_pay = -net
+		paid = actual_paid.get(name, 0.0)
+		pay_delta = paid - expected_pay
+		if abs(pay_delta) <= 1e-9:
+			status = "✅"
+		elif pay_delta < 0:
+			status = f"❌ paying less by ${-pay_delta:.2f}"
+		else:
+			status = f"❌ paying more by ${pay_delta:.2f}"
+		lines.append(
+			f"- {name}: expected pay ${expected_pay:.2f}, actual pay ${paid:.2f}, {status}"
+		)
+		has_payer_line = True
+		lines.append("")
+
+	if not has_payer_line:
+		lines.append("- (none)")
+		lines.append("")
+
+	lines.append("Receivers:")
+
+	has_receiver_line = False
+	for name, net in players.items():
+		if net <= 0:
+			continue
+		expected_receive = net
+		received = actual_received.get(name, 0.0)
+		receive_delta = received - expected_receive
+		if abs(receive_delta) <= 1e-9:
+			status = "✅"
+		elif receive_delta < 0:
+			status = f"❌ receiving less by ${-receive_delta:.2f}"
+		else:
+			status = f"❌ receiving more by ${receive_delta:.2f}"
+		lines.append(
+			f"- {name}: expected receive ${expected_receive:.2f}, actual receive ${received:.2f}, {status}"
+		)
+		has_receiver_line = True
+		lines.append("")
+
+	if not has_receiver_line:
+		lines.append("- (none)")
+		lines.append("")
+
+	return "\n".join(lines)
 
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix: str | None = None) -> None:
@@ -204,8 +295,10 @@ async def handle_compute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 	final_state = [[name, amount] for name, amount in players.items()]
 	transactions = compute(final_state)
-	net_summary = build_net_summary(players)
+	reconciliation = build_mismatch_reconciliation(players, transactions)
 	output = "\n".join(transactions)
+	if reconciliation:
+		output = f"{output}\n\n{reconciliation}"
 
 	await update.message.reply_text(output, reply_markup=build_main_menu_markup())
 

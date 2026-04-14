@@ -56,7 +56,7 @@ def build_header_transactions(sum_owes, sum_owed):
             f"Warning: Total owed does not match total owes. Please check the input data.\n\nTotal Owed: ${-sum_owed:.2f}, Total Owes: ${-sum_owes:.2f}\n"
         )
     else:
-        transactions.append(f"Total Owed: ${-sum_owed:.2f}, Total Owes: ${-sum_owes:.2f}\n")
+        transactions.append(f"Total Owed: ${-sum_owed:.2f}\nTotal Owes: ${-sum_owes:.2f}\n")
     transactions.append("Transactions to settle debts:")
     return transactions
 
