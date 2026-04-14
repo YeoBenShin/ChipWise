@@ -49,6 +49,7 @@ ERR_PLAYER_NAME_EXISTS = "Player name already exists: {name}"
 ERR_CHOOSE_YES_NO = "Please choose Yes or No."
 ERR_UNKNOWN_OPTION = "Unknown option.\nUse the menu buttons or /start."
 ERR_MISSING_BOT_TOKEN = "Missing TELEGRAM_BOT_TOKEN in environment or .env file"
+ERR_MISSING_WEBHOOK_URL = "Missing WEBHOOK_URL in environment or .env file"
 
 
 def format_error(detail: str) -> str:
@@ -550,8 +551,24 @@ def get_bot_token() -> str:
 	return token
 
 
+def get_webhook_config() -> Tuple[str, str, int, str]:
+	webhook_url = os.getenv("WEBHOOK_URL", "").strip()
+	if not webhook_url:
+		raise ValueError(ERR_MISSING_WEBHOOK_URL)
+
+	webhook_path = os.getenv("WEBHOOK_PATH", "/telegram-webhook").strip() or "/telegram-webhook"
+	if not webhook_path.startswith("/"):
+		webhook_path = f"/{webhook_path}"
+
+	listen = os.getenv("WEBHOOK_LISTEN", "0.0.0.0").strip() or "0.0.0.0"
+	port = int(os.getenv("PORT", "8080").strip())
+
+	return webhook_url, webhook_path, port, listen
+
+
 def main() -> None:
 	token = get_bot_token()
+	webhook_url, webhook_path, port, listen = get_webhook_config()
 	app = Application.builder().token(token).build()
 
 	app.add_handler(CommandHandler("start", start))
@@ -559,7 +576,13 @@ def main() -> None:
 	app.add_handler(CommandHandler("cancel", cancel))
 	app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_text))
 
-	app.run_polling()
+	app.run_webhook(
+		listen=listen,
+		port=port,
+		url_path=webhook_path,
+		webhook_url=f"{webhook_url}{webhook_path}",
+		drop_pending_updates=True,
+	)
 
 
 if __name__ == "__main__":

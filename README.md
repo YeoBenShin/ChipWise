@@ -51,6 +51,10 @@ pip install -r requirements.txt
 
 ```env
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+WEBHOOK_URL=https://your-public-domain-or-tunnel
+WEBHOOK_PATH=/telegram-webhook
+PORT=8080
+WEBHOOK_LISTEN=0.0.0.0
 ```
 
 4. Run the bot:
@@ -72,6 +76,10 @@ docker build -t greedy-debt-settlement .
 ```bash
 docker run --rm \
   -e TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here \
+  -e WEBHOOK_URL=https://your-public-domain-or-tunnel \
+  -e WEBHOOK_PATH=/telegram-webhook \
+  -e PORT=8080 \
+  -e WEBHOOK_LISTEN=0.0.0.0 \
   greedy-debt-settlement
 ```
 
@@ -102,7 +110,7 @@ Important:
 ## Example Settlement Output
 
 The bot returns:
-- a pot consistency summary,
+- a totals consistency summary,
 - total owed vs total owes,
 - settlement transfers like:
 
