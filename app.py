@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import asyncio
+import threading
 from typing import Dict, List, Tuple
 
 from flask import Flask, jsonify, request
@@ -92,6 +93,10 @@ def get_mode(context: ContextTypes.DEFAULT_TYPE) -> str | None:
 
 def build_main_menu_markup() -> ReplyKeyboardMarkup:
 	return ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
+
+
+async def handle_telegram_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+	logging.exception("Unhandled Telegram handler error", exc_info=context.error)
 
 
 def build_edit_player_picker_markup(players: Dict[str, float]) -> ReplyKeyboardMarkup:
@@ -580,6 +585,7 @@ def build_telegram_application(token: str) -> Application:
 	telegram_app.add_handler(CommandHandler("help", start))
 	telegram_app.add_handler(CommandHandler("cancel", cancel))
 	telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_text))
+	telegram_app.add_error_handler(handle_telegram_error)
 
 	return telegram_app
 
@@ -619,6 +625,42 @@ async def register_telegram_webhook() -> dict:
 	return {"webhook_url": webhook_url, "secret_token_enabled": bool(webhook_secret)}
 
 
+_telegram_loop: asyncio.AbstractEventLoop | None = None
+_telegram_loop_thread: threading.Thread | None = None
+_telegram_loop_lock = threading.Lock()
+
+
+def _run_loop_forever(loop: asyncio.AbstractEventLoop) -> None:
+	asyncio.set_event_loop(loop)
+	loop.run_forever()
+
+
+def get_telegram_loop() -> asyncio.AbstractEventLoop:
+	global _telegram_loop, _telegram_loop_thread
+
+	if _telegram_loop is not None and not _telegram_loop.is_closed():
+		return _telegram_loop
+
+	with _telegram_loop_lock:
+		if _telegram_loop is None or _telegram_loop.is_closed():
+			_telegram_loop = asyncio.new_event_loop()
+			_telegram_loop_thread = threading.Thread(
+				target=_run_loop_forever,
+				args=(_telegram_loop,),
+				name="telegram-event-loop",
+				daemon=True,
+			)
+			_telegram_loop_thread.start()
+
+	return _telegram_loop
+
+
+def run_on_telegram_loop(coro):
+	loop = get_telegram_loop()
+	future = asyncio.run_coroutine_threadsafe(coro, loop)
+	return future.result()
+
+
 app = Flask(__name__)
 app.telegram_application = None
 
@@ -631,7 +673,7 @@ def health_check():
 @app.get("/api/set-webhook")
 def set_webhook_route():
 	try:
-		result = asyncio.run(register_telegram_webhook())
+		result = run_on_telegram_loop(register_telegram_webhook())
 	except Exception as error:
 		return jsonify({"ok": False, "error": str(error)}), 500
 	return jsonify({"ok": True, **result})
@@ -650,7 +692,7 @@ def telegram_webhook_route():
 		return jsonify({"ok": False, "error": "missing json payload"}), 400
 
 	try:
-		asyncio.run(process_telegram_update(payload))
+		run_on_telegram_loop(process_telegram_update(payload))
 	except Exception as error:
 		logging.exception("Failed to process Telegram update")
 		return jsonify({"ok": False, "error": str(error)}), 500

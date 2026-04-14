@@ -85,7 +85,7 @@ docker run --rm \
   -e TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here \
   -e WEBHOOK_URL=https://your-public-domain-or-tunnel \
   -e WEBHOOK_SECRET_TOKEN=optional_shared_secret \
-  greedy-debt-settlement
+  chipwise
 ```
 
 ## Setup (Vercel)
