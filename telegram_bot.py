@@ -103,10 +103,17 @@ def parse_player_line(text: str) -> Tuple[str, float]:
 		raise ValueError(ERR_INVALID_PLAYER_FORMAT)
 
 	amount_token = parts[-1]
-	if len(parts) >= 2 and parts[-2] in {"-", "+"}:
-		raise ValueError(ERR_SIGN_SEPARATED_FROM_AMOUNT)
+	name_parts = parts[:-1]
+	if len(parts) >= 3 and parts[-2] in {"-", "+"}: # if separate sign from number, merge it back (example: - 20 -> -20)
+		amount_token = f"{parts[-2]}{parts[-1]}"
+		name_parts = parts[:-2]
 
-	name = " ".join(parts[:-1]).strip()
+	amount_token = re.sub(r"[^0-9.+-]", "", amount_token)
+
+	name = " ".join(name_parts).strip()
+	if not name:
+		raise ValueError(ERR_EMPTY_NAME)
+	name = re.sub(r"[^A-Za-z\s]", "", name)  # Keep only alphabetic characters and spaces
 	if not name:
 		raise ValueError(ERR_EMPTY_NAME)
 
