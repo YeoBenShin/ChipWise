@@ -21,20 +21,13 @@ logging.basicConfig(
 MAIN_MENU = [
 	["Compute Debt"],
 	["Add Players"],
-	["Edit Information", "Clear All Information"],
+	["Clear All Information"],
 ]
 
 DONE_ADDING = "Done Adding Players"
 BACK_MAIN = "Back to Main Menu"
 
-EDIT_TYPE_MENU = [["Players"], [BACK_MAIN]]
-EDIT_CONTINUE_MENU = [["Yes", "No"]]
-
 MODE_ADD_MULTI = "add_multi"
-MODE_EDIT_CHOOSE_TYPE = "edit_choose_type"
-MODE_EDIT_CHOOSE_PLAYER = "edit_choose_player"
-MODE_EDIT_PLAYER_VALUE = "edit_player_value"
-MODE_EDIT_CONTINUE = "edit_continue"
 
 ERROR_PREFIX = "Error: {detail}"
 ERR_INVALID_PLAYER_FORMAT = "Invalid format.\nUse: person_name amount"
@@ -43,13 +36,7 @@ ERR_EMPTY_PLAYER_BLOCK = "Please provide at least one non-empty line."
 ERR_DUPLICATE_PLAYER_IN_INPUT = "Duplicate player name in the same input: {name}"
 ERR_SIGN_SEPARATED_FROM_AMOUNT = "Invalid amount. Do not separate '+' or '-' from the number (example: -20, not - 20)."
 ERR_NO_PLAYERS_TO_COMPUTE = "No players found. Add players first."
-ERR_PLAYER_EXISTS = "Player already exists: {name}.\nUse Edit Information to change it."
-ERR_NO_PLAYERS_TO_EDIT = "No players available to edit."
-ERR_INVALID_EDIT_OPTION = "Invalid option.\nChoose 'Players'."
-ERR_PLAYER_NOT_FOUND = "Player not found.\nPlease choose one of the listed names."
-ERR_SELECTED_PLAYER_MISSING = "Selected player no longer exists.\nChoose edit option again."
-ERR_PLAYER_NAME_EXISTS = "Player name already exists: {name}"
-ERR_CHOOSE_YES_NO = "Please choose Yes or No."
+ERR_PLAYER_EXISTS = "Player already exists: {name}."
 ERR_UNKNOWN_OPTION = "Unknown option.\nUse the menu buttons or /start."
 ERR_MISSING_BOT_TOKEN = "Missing TELEGRAM_BOT_TOKEN in environment or .env file"
 ERR_MISSING_WEBHOOK_URL = "Missing WEBHOOK_URL in environment or VERCEL_URL in environment or .env file"
@@ -97,13 +84,6 @@ def build_main_menu_markup() -> ReplyKeyboardMarkup:
 
 async def handle_telegram_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 	logging.exception("Unhandled Telegram handler error", exc_info=context.error)
-
-
-def build_edit_player_picker_markup(players: Dict[str, float]) -> ReplyKeyboardMarkup:
-	rows = [[name] for name in players.keys()]
-	rows.append([BACK_MAIN])
-	return ReplyKeyboardMarkup(rows, resize_keyboard=True)
-
 
 def parse_player_line(text: str) -> Tuple[str, float]:
 	parts = text.strip().split()
@@ -157,19 +137,19 @@ def parse_multiple_players_block(text: str) -> List[Tuple[str, float]]:
 
 
 def build_net_summary(players: Dict[str, float]) -> str:
-	total_owes = sum(-amount for amount in players.values() if amount < 0)
-	total_owed = sum(amount for amount in players.values() if amount > 0)
-	difference = total_owed - total_owes
+	total_amount_to_pay = sum(-amount for amount in players.values() if amount < 0)
+	total_amount_to_receive = sum(amount for amount in players.values() if amount > 0)
+	difference = total_amount_to_receive - total_amount_to_pay
 
 	if abs(difference) > 1e-9:
 		return (
-			f"Warning: Total owed does not match total owes. Please check the input data.\n\n"
-			f"Total Owed: ${total_owed:.2f}\nTotal Owes: ${total_owes:.2f}\n"
+			f"Warning: Total amount to receive does not match total amount to pay. Please check the input data.\n\n"
+			f"Total amount to receive: ${total_amount_to_receive:.2f}\nTotal amount to pay: ${total_amount_to_pay:.2f}\n"
 			f"Difference: ${difference:.2f}"
 		)
 
 	return (
-		f"Total Owed: ${total_owed:.2f}\nTotal Owes: ${total_owes:.2f}\n"
+		f"Total amount to receive: ${total_amount_to_receive:.2f}\nTotal amount to pay: ${total_amount_to_pay:.2f}\n"
 		f"Difference: ${difference:.2f}"
 	)
 
@@ -203,9 +183,9 @@ def parse_transfer_line(line: str) -> Tuple[str, str, float] | None:
 
 
 def build_mismatch_reconciliation(players: Dict[str, float], transactions: List[str]) -> str:
-	total_owes = sum(-amount for amount in players.values() if amount < 0)
-	total_owed = sum(amount for amount in players.values() if amount > 0)
-	difference = total_owed - total_owes
+	total_amount_to_pay = sum(-amount for amount in players.values() if amount < 0)
+	total_amount_to_receive = sum(amount for amount in players.values() if amount > 0)
+	difference = total_amount_to_receive - total_amount_to_pay
 
 	if abs(difference) <= 1e-9:
 		return ""
@@ -294,7 +274,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 	set_mode(context, None)
-	context.user_data.pop("edit_target_player", None)
 	await show_main_menu(update, context, "Operation canceled.")
 
 
@@ -354,148 +333,9 @@ async def handle_add_multi_mode(update: Update, context: ContextTypes.DEFAULT_TY
 	set_mode(context, None)
 	await show_main_menu(update, context, f"Added {len(parsed_players)} players.")
 
-async def enter_edit_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-	set_mode(context, MODE_EDIT_CHOOSE_TYPE)
-	current_state = build_data_summary(context)
-	await update.message.reply_text(
-		f"Current state:\n{current_state}\n\nWhat would you like to edit?",
-		reply_markup=ReplyKeyboardMarkup(EDIT_TYPE_MENU, resize_keyboard=True),
-	)
-
-
-async def ask_edit_continue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-	set_mode(context, MODE_EDIT_CONTINUE)
-	await update.message.reply_text(
-		"Do you still want to edit?",
-		reply_markup=ReplyKeyboardMarkup(EDIT_CONTINUE_MENU, resize_keyboard=True),
-	)
-
-
-async def handle_edit_choose_type(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-	if text == BACK_MAIN:
-		set_mode(context, None)
-		await show_main_menu(update, context, "Back to main menu.")
-		return
-
-	if text == "Players":
-		players = get_players_store(context)
-		if not players:
-			await update.message.reply_text(
-				ERR_NO_PLAYERS_TO_EDIT,
-				reply_markup=ReplyKeyboardMarkup(EDIT_TYPE_MENU, resize_keyboard=True),
-			)
-			return
-
-		set_mode(context, MODE_EDIT_CHOOSE_PLAYER)
-		current_state = build_data_summary(context)
-		await update.message.reply_text(
-			f"Current state:\n{current_state}\n\nChoose a player to edit by name.",
-			reply_markup=build_edit_player_picker_markup(players),
-		)
-		return
-
-	await update.message.reply_text(
-		ERR_INVALID_EDIT_OPTION,
-		reply_markup=ReplyKeyboardMarkup(EDIT_TYPE_MENU, resize_keyboard=True),
-	)
-
-
-async def handle_edit_choose_player(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-	if text == BACK_MAIN:
-		set_mode(context, MODE_EDIT_CHOOSE_TYPE)
-		await update.message.reply_text(
-			"What would you like to edit?",
-			reply_markup=ReplyKeyboardMarkup(EDIT_TYPE_MENU, resize_keyboard=True),
-		)
-		return
-
-	players = get_players_store(context)
-	if text not in players:
-		await update.message.reply_text(
-			ERR_PLAYER_NOT_FOUND,
-			reply_markup=build_edit_player_picker_markup(players),
-		)
-		return
-
-	context.user_data["edit_target_player"] = text
-	set_mode(context, MODE_EDIT_PLAYER_VALUE)
-	await update.message.reply_text(
-		"Send the new player info in format: person_name amount\n\n"
-		"The amount should be each player's FINAL net result. Use negative for losses and positive for winnings.",
-		reply_markup=ReplyKeyboardMarkup([[BACK_MAIN]], resize_keyboard=True),
-	)
-
-
-async def handle_edit_player_value(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-	if text == BACK_MAIN:
-		set_mode(context, MODE_EDIT_CHOOSE_TYPE)
-		await update.message.reply_text(
-			"What would you like to edit?",
-			reply_markup=ReplyKeyboardMarkup(EDIT_TYPE_MENU, resize_keyboard=True),
-		)
-		return
-
-	old_name = context.user_data.get("edit_target_player")
-	players = get_players_store(context)
-
-	if old_name not in players:
-		set_mode(context, MODE_EDIT_CHOOSE_TYPE)
-		await update.message.reply_text(
-			ERR_SELECTED_PLAYER_MISSING,
-			reply_markup=ReplyKeyboardMarkup(EDIT_TYPE_MENU, resize_keyboard=True),
-		)
-		return
-
-	try:
-		new_name, new_amount = parse_player_line(text)
-		if new_name != old_name and new_name in players:
-			raise ValueError(ERR_PLAYER_NAME_EXISTS.format(name=new_name))
-	except ValueError as error:
-		await update.message.reply_text(
-			format_error(str(error)),
-			reply_markup=ReplyKeyboardMarkup([[BACK_MAIN]], resize_keyboard=True),
-		)
-		return
-
-	old_players = dict(players)
-
-	del players[old_name]
-	players[new_name] = new_amount
-	context.user_data.pop("edit_target_player", None)
-
-	new_state = build_data_summary_from_values(players)
-	await update.message.reply_text(
-		f"Player updated.\n"
-		f"Old value: {old_name} ${old_players[old_name]:.2f}\n"
-		f"New value: {new_name} ${new_amount:.2f}\n\n"
-		f"New state:\n{new_state}"
-	)
-	await ask_edit_continue(update, context)
-
-async def handle_edit_continue(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-	lowered = text.strip().lower()
-	if lowered == "yes":
-		set_mode(context, MODE_EDIT_CHOOSE_TYPE)
-		await update.message.reply_text(
-			"What would you like to edit?",
-			reply_markup=ReplyKeyboardMarkup(EDIT_TYPE_MENU, resize_keyboard=True),
-		)
-		return
-
-	if lowered == "no":
-		set_mode(context, None)
-		await show_main_menu(update, context, "Finished editing.")
-		return
-
-	await update.message.reply_text(
-		ERR_CHOOSE_YES_NO,
-		reply_markup=ReplyKeyboardMarkup(EDIT_CONTINUE_MENU, resize_keyboard=True),
-	)
-
 
 async def clear_all_information(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 	context.user_data["players"] = {}
-	context.user_data.pop("edit_target_player", None)
 	set_mode(context, None)
 	await show_main_menu(update, context, "All information has been cleared.")
 
@@ -512,32 +352,12 @@ async def route_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 		await handle_add_multi_mode(update, context, text)
 		return
 
-	if mode == MODE_EDIT_CHOOSE_TYPE:
-		await handle_edit_choose_type(update, context, text)
-		return
-
-	if mode == MODE_EDIT_CHOOSE_PLAYER:
-		await handle_edit_choose_player(update, context, text)
-		return
-
-	if mode == MODE_EDIT_PLAYER_VALUE:
-		await handle_edit_player_value(update, context, text)
-		return
-
-	if mode == MODE_EDIT_CONTINUE:
-		await handle_edit_continue(update, context, text)
-		return
-
 	if text == "Compute Debt":
 		await handle_compute(update, context)
 		return
 
 	if text == "Add Players":
 		await enter_add_multi_mode(update, context)
-		return
-
-	if text == "Edit Information":
-		await enter_edit_mode(update, context)
 		return
 
 	if text == "Clear All Information":

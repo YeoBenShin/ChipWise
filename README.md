@@ -3,8 +3,7 @@
 A simple Telegram bot that helps settle debts between players using a greedy cash-flow algorithm.
 
 The bot lets you:
-- add player final balances,
-- edit player values,
+- add player final balances
 - compute a minimal set of settlement transfers.
 
 ## How It Works
@@ -23,7 +22,6 @@ Each transfer is the minimum of those two amounts, repeated until all balances a
 ## Project Structure
 
 - `app.py`: Flask entrypoint, webhook routes, and bot handlers
-- `telegram_bot.py`: Telegram bot UI and conversation flow
 - `min_cash_flow.py`: Greedy debt settlement algorithm
 - `requirements.txt`: Python dependency list
 - `Dockerfile`: Container setup to run the bot
@@ -118,7 +116,6 @@ Start the bot in Telegram with `/start`.
 
 Main menu options:
 - `Add Players`
-- `Edit Information`
 - `Compute Debt`
 - `Clear All Information`
 
